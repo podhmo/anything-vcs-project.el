@@ -24,6 +24,10 @@
 (eval-when-compile (require 'cl))
 
 ;; utility
+(defun wp:current-buffer ()
+  (if load-in-progress (find-file-noselect load-file-name) (current-buffer)))
+
+
 (defun wp:x-to-string (x)
   (format "%s" x))
 
@@ -92,8 +96,6 @@
                           `(,bufname . ,relations))))))
 
 (defun with-prefix:replace-shortcut-to-full-prefix-generator (shortcut-rx-full-prefix-alist)
-    (print shortcut-rx-full-prefix-alist)
-
   (lexical-let ((shortcut-rx-full-prefix-alist shortcut-rx-full-prefix-alist))
     (lambda (elt)
       (let ((replacement* (symbol-name elt)))
@@ -115,8 +117,8 @@
           (lambda (elt)
             (cond ((not (symbolp elt)) elt)
                   (t (funcall %replace-shortcut-to-full-prefix elt))))
-          body))))
-      
+          body))))      
+
  ;; with-prefix is using in definition
 (defmacro with-prefix (head &rest body)
   "with-prefix is pseudo-name-space(but roughly implement)"
@@ -129,7 +131,7 @@
                  head)))
     ;; add a relation  for describe-function
     (with-prefix:update-prefix-relations
-     (current-buffer)  bindings)
+     (wp:current-buffer)  bindings)
 
     (let ((shortcut-rx-full-prefix-alist 
            (loop for (shortcut full-prefix) in bindings

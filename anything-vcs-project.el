@@ -90,19 +90,19 @@
   (put '@aif 'lisp-indent-function 2)
 
   ;; util
-  (defun %all-parent-path-candidates (path)
+  (defun %all-parent-path-candidates (head words)
     "create all candidates: path -> (\"~/foo/bar/boo\" \"~/foo/bar\" \"~/foo\" \"~\")"
     (loop for word in words
           with acc = head
           unless (string-equal "" word)
-          do (defvar acc (concat acc "/" word))
+          do (setq acc (concat acc "/" word))
           and collect acc into result
           finally return (nreverse (cons head result))))
   
   (defun %check-target-is-exist-in-path (path target)
     "checking targetted file is exist in path."
     (destructuring-bind (head . words) (split-string path "/")
-      (@let1 candidates (%all-parent-path-candidates path)
+      (@let1 candidates (%all-parent-path-candidates head words)
         (lexical-let ((target target))
           (find target candidates
                 :test (lambda (target path)
@@ -192,12 +192,17 @@
 
   ;; project
   (defvar @cache-enable-p t)
+
+  (defvar cache.project-list-path "~/.emacs.d/.project.list")
   (defstruct cache.sync-list file list)
   (defalias 'cache.make-sync-list 'make-anything-vcs-project-cache:sync-list)
-  (defvar cache.project-list (cache.make-sync-list :file "~/.emacs.d/.project.list" :list nil))
+  (defvar cache.project-list nil)
+  (defun cache.project-list-init ()
+    (setq cache.project-list
+          (cache.make-sync-list :file cache.project-list-path :list nil)))
 
   (defun cache.project-list ()
-    (or (cache.sync-list-list cache.project-list)
+    (or (cache.sync-list-list (or cache.project-list (cache.project-list-init)))
          (let* ((file (cache.sync-list-file cache.project-list))
                 (buf (find-file-noselect file))
                 (content  (with-current-buffer buf
@@ -237,24 +242,23 @@
          (values 'git.anything-c-sources-git-project-for it "git"))
     ))
 
-
   (defun anything-vcs-project (&optional default-dir project-select-is-disable-p)
     (interactive)
     (multiple-value-bind (source-generator root-dir vcs-name)
         (@select-x-project default-dir)
-
-      (let* ((sources (funcall source-generator root-dir))
-             (sources* (if project-select-is-disable-p
-                           sources
-                           (cons '@anything-c-sources-project sources)))
-             (any-buffer (format "*Anything %s project in %s*" vcs-name root-dir)))       
-
-        (when root-dir
-          (when @cache-enable-p
-            (cache.add-item root-dir))
-          (anything-other-buffer sources* any-buffer)))))
+      (cond (root-dir
+             (let* ((sources (funcall source-generator root-dir))
+                    (sources* (if project-select-is-disable-p
+                                  sources
+                                  (cons '@anything-c-sources-project sources)))
+                    (any-buffer (format "*Anything %s project in %s*" vcs-name root-dir)))       
+               
+               (when @cache-enable-p
+                 (cache.add-item root-dir))
+               (anything-other-buffer sources* any-buffer)))
+            ((not project-select-is-disable-p)
+             (anything-other-buffer '(@anything-c-sources-project) " *anything vcs project*")))))
   )
-
 
 (provide 'anything-vcs-project)
 ;;; anything-vcs-project.el ends here

@@ -2,7 +2,7 @@
 
 ;;;; how to use
 ;; (with-prefix 
-;;     ((@ wp:)
+;;     ((@ with-prefix:)
 ;;      (util. with-prefix-util:))
   
 ;;   (defun @odd? (x) 
@@ -27,10 +27,11 @@
 (defun wp:x-to-string (x)
   (format "%s" x))
 
-
 (defun wp:x-to-prefix-regexp (x)
-  (let ((xs (split-string (wp:x-to-string x) "\\.")))
-    (concat "^" (mapconcat 'identity xs "\\."))))
+  (concat "^" (replace-regexp-in-string "\\([\\*\\^\\$\\.]\\)" "\\\\\\1" x)))
+
+(defun wp:x-remove-prefix-regexp (x)
+  (substring-no-properties (replace-regexp-in-string "\\\\" "" x) 1))
 
 (defun wp:tree-map-safe (fn tree)
   "`wp:mapcar-safe' recursive version"
@@ -77,6 +78,8 @@
 (defvar with-prefix:buffer-prefix-relation-alist nil
   "this variable is internal variable. don't change value.")
 
+(defun with-prefix:buffer-prefix-relation-alist-clean () (interactive)
+  (setq with-prefix:buffer-prefix-relation-alist nil))
 
 (defun with-prefix:update-prefix-relations (bound-buf bindings)
   (let* ((bufname (buffer-name bound-buf))
@@ -87,7 +90,34 @@
     (cond (alist (setf (cdr alist) (union (cdr alist) relations :test 'equal)))
           (t (add-to-list 'with-prefix:buffer-prefix-relation-alist
                           `(,bufname . ,relations))))))
-  
+
+(defun with-prefix:replace-shortcut-to-full-prefix-generator (shortcut-rx-full-prefix-alist)
+    (print shortcut-rx-full-prefix-alist)
+
+  (lexical-let ((shortcut-rx-full-prefix-alist shortcut-rx-full-prefix-alist))
+    (lambda (elt)
+      (let ((replacement* (symbol-name elt)))
+        (loop for (shortcut . full-prefix) in shortcut-rx-full-prefix-alist
+              do
+              (setq replacement*
+                    (replace-regexp-in-string
+                     shortcut full-prefix replacement*)))
+        (intern replacement*)))))
+
+(defun with-prefix:body-translator (shortcut-rx-full-prefix-alist body)
+  (let ((%replace-shortcut-to-full-prefix
+         (with-prefix:replace-shortcut-to-full-prefix-generator
+          shortcut-rx-full-prefix-alist)))
+    
+    `(progn
+       ;;replace
+       ,@(wp:tree-map-safe
+          (lambda (elt)
+            (cond ((not (symbolp elt)) elt)
+                  (t (funcall %replace-shortcut-to-full-prefix elt))))
+          body))))
+      
+ ;; with-prefix is using in definition
 (defmacro with-prefix (head &rest body)
   "with-prefix is pseudo-name-space(but roughly implement)"
   (declare (indent 1) (debug t))
@@ -101,32 +131,32 @@
     (with-prefix:update-prefix-relations
      (current-buffer)  bindings)
 
-    (lexical-let ((shortcut-rx-full-prefix-alist 
-                   (loop for (shortcut full-prefix) in bindings
-                         collect `(,(wp:x-to-prefix-regexp shortcut) . ,full-prefix))))
+    (let ((shortcut-rx-full-prefix-alist 
+           (loop for (shortcut full-prefix) in bindings
+                 collect (cons (wp:x-to-prefix-regexp shortcut) 
+                               full-prefix))))
 
-    (labels ((%replace-shortcut-to-full-prefix
-              (elt)
-              (let ((replacement* (symbol-name elt)))
-                (loop for (shortcut . full-prefix) in shortcut-rx-full-prefix-alist
-                      do
-                      (setq replacement*
-                            (replace-regexp-in-string
-                             shortcut full-prefix replacement*)))
-                (intern replacement*))))
-
-             `(progn
-                ;; replace
-                ,@(wp:tree-map-safe
-                   (lambda (elt)
-                     (cond ((not (symbolp elt)) elt)
-                           (t (%replace-shortcut-to-full-prefix elt))))
-                   body))))))
+      (with-prefix:body-translator
+       shortcut-rx-full-prefix-alist body))))
 
 (defmacro with-prefix1 (target replacement &rest body)
   (declare (indent 2) (debug t))
   `(with-prefix ((,target ,replacement))
                 ,@body))
+
+;; with-shortcut is using in evalation ?
+(defmacro with-shortcut (buf &rest body)
+  (let ((buf (if (bufferp buf) buf (get-buffer buf))))
+    (or (and-let* ((relation (assoc-default (buffer-name buf) with-prefix:buffer-prefix-relation-alist))
+                   (shortcut-rx-full-prefix-alist
+                    (loop for (full-prefix . shortcut) in relation
+                          collect (cons (wp:x-to-prefix-regexp shortcut)
+                                        (wp:x-remove-prefix-regexp full-prefix)))))
+          (with-prefix:body-translator shortcut-rx-full-prefix-alist body))
+        body)))
+  
+(defmacro with-shortcut-current-buffer (&rest body)
+  `(with-shortcut ,(current-buffer) ,@body))
 
 ;; a advice for finding function location
 (defadvice find-function-search-for-symbol
@@ -154,9 +184,13 @@
                  (setq ad-return-value (cons buf (point))))))))))
 
 ;; ;; for debugging
-
 ;; ;; (add-to-list 'load-path default-directory)
 ;; ;; (find-function-search-for-symbol 'with-prefix:odd\? nil "with-prefix.el")
 ;; ;; (find-function-search-for-symbol 'with-prefix nil "with-prefix.el")
+
+;; (with-prefix ((@ foo.))
+;;   (setq @yoo 10))
+;; (with-shortcut-current-buffer
+;;  @yoo)
 
 (provide 'with-prefix)

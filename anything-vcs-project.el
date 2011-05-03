@@ -24,13 +24,16 @@
 
 ;;; Code:
 
+(eval-when-compile (require 'cl))
+(require 'with-prefix)
 
 (with-prefix ((@ anything-vcs-project:)
               (% anything-vcs-project-util:)
               (git. anything-vcs-project-git:)
-              (hg. anything-vcs-project-hg:))
+              (hg. anything-vcs-project-hg:)
+              (cache. anything-vcs-project-cache:))
 
-  ;; macro utils
+  ;; util macro
   (defmacro @with-lexical-bindings (syms &rest body)
     (let ((clauses (loop for sym in syms collect (\` ((\, sym) (\, sym))))))
       (\` (lexical-let ((\,@ clauses)) (\,@ body)))))
@@ -92,7 +95,7 @@
     (loop for word in words
           with acc = head
           unless (string-equal "" word)
-          do (setq acc (concat acc "/" word))
+          do (defvar acc (concat acc "/" word))
           and collect acc into result
           finally return (nreverse (cons head result))))
   
@@ -105,11 +108,11 @@
                 :test (lambda (target path)
                         (file-exists-p (concat path "/" target))))))))
 
-  (defun %in-expected-repository (expexted-dir)
+  (defun %in-expected-repository (expexted-dir &optional default-dir)
     "if in expexted file(directory) in repository, then return root path of one"
-    (and default-directory
-         (%check-target-is-exist-in-path (file-truename default-directory) expexted-dir)))
-  
+    (@and-let* ((default-dir (or default-dir default-directory)))
+      (%check-target-is-exist-in-path (file-truename default-dir) expexted-dir)))
+
   (defun %commad-to-buffer (bufname root command args exclude-args &optional filter-hook)
     "notice: args is string. not list"
     (when (get-buffer bufname)
@@ -133,7 +136,7 @@
       (concat dir* "/" fname*)))
   
   ;; hg mercurial
-  (defvar hg.exclude-args "--exclude '*.pyc'")
+  (defvar hg.exclude-args "--exclude '*.pyc' --exclude .git")
 
   (defun hg.generate-source (header-fmt root-dir command &optional hook)
     `((name . ,(format header-fmt root-dir))
@@ -187,23 +190,71 @@
             (candidates-in-buffer)
             (type . file))))
 
-  ;; wrap
-  (defun @select-x-project ()
-    (or
-     (@aif (%in-expected-repository ".hg")
-         (values 'hg.anything-c-sources-hg-project-for it "hg")))
-     (@aif (%in-expected-repository ".git")
-            (values 'git.anything-c-sources-git-project-for it "git"))
-    )
+  ;; project
+  (defvar @cache-enable-p t)
+  (defstruct cache.sync-list file list)
+  (defalias 'cache.make-sync-list 'make-anything-vcs-project-cache:sync-list)
+  (defvar cache.project-list (cache.make-sync-list :file "~/.emacs.d/.project.list" :list nil))
 
-  (defun anything-vcs-project ()
+  (defun cache.project-list ()
+    (or (cache.sync-list-list cache.project-list)
+         (let* ((file (cache.sync-list-file cache.project-list))
+                (buf (find-file-noselect file))
+                (content  (with-current-buffer buf
+                            (buffer-string))))
+           
+           (message "load from %s ..." file)
+
+           (setf (cache.sync-list-list cache.project-list)
+                   (remove-if (lambda (x) (string-equal "" x))
+                              (split-string content "\n"))))))
+
+  (defun cache.add-item (item)
+    (@rlet1 xs (cache.project-list)
+      (unless (member* item xs :test 'string-equal)
+        (push item xs)
+        (setf (cache.sync-list-list cache.project-list) xs)
+
+        (let* ((file (cache.sync-list-file cache.project-list))
+               (buf (find-file-noselect file)))
+        (with-current-buffer buf
+          (save-excursion (goto-char (point-min))
+                          (insert item "\n")
+                          (save-buffer)))))))
+    
+  (defvar @anything-c-sources-project 
+    '((name . "vcs project")
+      (candidates . (lambda () (cache.project-list)))
+      (action . (lambda (c)
+                  (run-with-timer 0.01 nil  'anything-vcs-project c t)))))
+   
+  ;; wrap
+  (defun @select-x-project (&optional default-dir)
+    (or
+     (@aif (%in-expected-repository ".hg" default-dir)
+         (values 'hg.anything-c-sources-hg-project-for it "hg"))
+     (@aif (%in-expected-repository ".git" default-dir)
+         (values 'git.anything-c-sources-git-project-for it "git"))
+    ))
+
+
+  (defun anything-vcs-project (&optional default-dir project-select-is-disable-p)
     (interactive)
     (multiple-value-bind (source-generator root-dir vcs-name)
-        (@select-x-project)
+        (@select-x-project default-dir)
+
       (let* ((sources (funcall source-generator root-dir))
-             (any-buffer (format "*Anything %s project in %s*" vcs-name root-dir)))
-        (and root-dir
-             (anything-other-buffer sources any-buffer)))))
+             (sources* (if project-select-is-disable-p
+                           sources
+                           (cons '@anything-c-sources-project sources)))
+             (any-buffer (format "*Anything %s project in %s*" vcs-name root-dir)))       
+
+        (when root-dir
+          (when @cache-enable-p
+            (cache.add-item root-dir))
+          (anything-other-buffer sources* any-buffer)))))
   )
+
+
 (provide 'anything-vcs-project)
 ;;; anything-vcs-project.el ends here

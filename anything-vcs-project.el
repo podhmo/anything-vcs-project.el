@@ -194,44 +194,19 @@
   (defvar @cache-enable-p t)
 
   (defvar cache.project-list-path "~/.emacs.d/.project.list")
-  (defstruct cache.sync-list file list)
-  (defalias 'cache.make-sync-list 'make-anything-vcs-project-cache:sync-list)
-  (defvar cache.project-list nil)
-  (defun cache.project-list-init ()
-    (setq cache.project-list
-          (cache.make-sync-list :file cache.project-list-path :list nil)))
-
-  (defun cache.project-list ()
-    (or (cache.sync-list-list (or cache.project-list (cache.project-list-init)))
-         (let* ((file (cache.sync-list-file cache.project-list))
-                (buf (find-file-noselect file))
-                (content  (with-current-buffer buf
-                            (buffer-string))))
-           
-           (message "load from %s ..." file)
-
-           (setf (cache.sync-list-list cache.project-list)
-                   (remove-if (lambda (x) (string-equal "" x))
-                              (split-string content "\n"))))))
-
-  (defun cache.add-item (item)
-    (@rlet1 xs (cache.project-list)
-      (unless (member* item xs :test 'string-equal)
-        (push item xs)
-        (setf (cache.sync-list-list cache.project-list) xs)
-
-        (let* ((file (cache.sync-list-file cache.project-list))
-               (buf (find-file-noselect file)))
-        (with-current-buffer buf
-          (save-excursion (goto-char (point-min))
-                          (insert item "\n")
-                          (save-buffer)))))))
     
   (defvar @anything-c-sources-project 
     '((name . "vcs project")
-      (candidates . (lambda () (cache.project-list)))
+      (candidates-file cache.project-list-path t)
       (action . (lambda (c)
                   (run-with-timer 0.01 nil  'anything-vcs-project c t)))))
+
+  (defun cache.add-item (item)
+    (@let1 buf (find-file-noselect cache.project-list-path)
+      (with-current-buffer buf
+        (save-excursion (goto-char (point-min))
+                        (insert item "\n")
+                        (save-buffer)))))
    
   ;; wrap
   (defun @select-x-project (&optional default-dir)

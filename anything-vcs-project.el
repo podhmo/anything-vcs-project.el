@@ -204,9 +204,12 @@
   (defun cache.add-item (item)
     (@let1 buf (find-file-noselect cache.project-list-path)
       (with-current-buffer buf
-        (save-excursion (goto-char (point-min))
-                        (insert item "\n")
-                        (save-buffer)))))
+        (save-excursion 
+          (goto-char (point-min))
+          (unless (re-search-forward item nil t 1)
+            (goto-char (point-min))
+            (insert item "\n")
+            (save-buffer))))))
    
   ;; wrap
   (defun @select-x-project (&optional default-dir)
